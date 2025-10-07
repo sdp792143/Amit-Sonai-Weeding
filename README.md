@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>CNG Route Finder —Live Tracking</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; }
+        #map { height: 100vh; width: 100%; }
+
+        /* Left controls */
+        #controls {
+            position: absolute; top: 12px; left: 12px; z-index: 1200;
+            background: #fff; padding: 10px; border-radius: 8px; width: 340px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        }
+
+        /* Right info panel */
+        #info {
+            position: absolute; top: 12px; right: 12px; z-index: 1200;
+            background: rgba(255,255,255,0.97); padding: 10px; border-radius: 8px;
+            width: 320px; box-shadow: 0 2px 6px rgba(0,0,0,0.2); font-size: 14px;
+        }
+        .counts { margin-top: 8px; border-top: 1px solid #eee; padding-top: 8px; }
+        .counts div { display:flex; justify-content:space-between; padding:2px 0; }
+
+        /* Buttons */
+        .btn { display:inline-block; margin-top:6px; padding:6px 10px; background:#1976d2; color:#fff; border-radius:6px; cursor:pointer; border: none; }
+        .btn.secondary { background:#4caf50; }
+        .btn.gray { background:#607d8b; }
+
+        /* NEW: Bottom-right POI legend with counts */
+        #poiLegend {
+            position: absolute; right: 12px; bottom: 12px; z-index: 1200;
+            background: rgba(255,255,255,0.98); padding: 10px 12px; border-radius: 8px; width: 260px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2); font-size: 13px;
+        }
+        #poiLegend .row { display:flex; align-items:center; justify-content:space-between; gap: 8px; margin:4px 0; }
+        #poiLegend .left { display:flex; align-items:center; gap:8px; }
+        .dot { width:12px; height:12px; border-radius:3px; display:inline-block; }
+        #poiLegend .hdr { font-weight: bold; margin-bottom: 6px; }
+
+        /* PDF preview */
+        #pdfPreviewModal { display:none; position:fixed; top:8%; left:6%; width:88%; height:84%; background:#fff; z-index:2000; box-shadow:0 6px 24px rgba(0,0,0,0.3); padding:12px; border-radius:8px; }
+        #pdfPreviewFrame { width:100%; height:92%; border:blank; }
+
+        #bufferValue { font-weight:bold; }
+        .row { display:flex; gap:8px; align-items:center; }
+        .row > * { flex:1; }
+        .small { font-size:12px; color:#333; }
+		
+	#vehicle-search-box { position: absolute; top: 5px; Left: 800px; width: 160px; padding: 5px; font-size: 14px; z-index: 2003; }
+	#vehicle-search { width: 100%; padding:4px; font-size: 25px;}
+	#vehicle-suggestions { max-height: 160px; overflow-y: auto; margin: 6px 0 0 0; padding: 0; list-style: none; border: 1px solid #ccc; background: white; display: none; width: calc(100% - 2px); position: relative; z-index: 2004; }
+	#vehicle-suggestions li { padding: 4px 6px; cursor: pointer; }
+	#vehicle-suggestions li:hover { background: #eee; }
+
+	.vehicle-icon { width: 12px; height: 20px; line-height: 0; transform-origin: center center; display: inline-block; }
+
+	.controls { margin-bottom: 5px; font-size: 12px; }
+	.leaflet-top.leaflet-left .leaflet-control-layers { margin-top: 60px !important; font-size: 11px; }
+
+	#vehicle-count-box { position: absolute; top: 800px; Left: 50px; width: 200px; background: white; padding: 8px; border: 1px solid #aaa; box-shadow: 1px 1px 3px rgba(0,0,0,0.2); font-size: 25px; line-height: 1.4em; z-index: 1000; }
+	#vehicle-count-box span { font-weight: bold; }
+	#vehicle-count-box .stopped { color: red; }
+	#vehicle-count-box .moving { color: green; }
+	#vehicle-count-box .nosignal { color: black; }
+
+	.select-search { padding: 4px 6px; font-size: 12px; width: 165px; margin-right: 6px; box-sizing: border-box; }
+
+	@keyframes blink { 0%, 50%, 100% { opacity:1; } 25%, 75% { opacity:0; } }
+
+	@media (max-width: 600px) {
+	  #navigation-box, #dbs-names-box { display:none; }
+	  #vehicle-search-box { right: 6px; width: 46%; }
+	  .select-search { width: 120px; display:block; margin-bottom:6px; }
+	}		
+    </style>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.3/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://unpkg.com/leaflet-image/leaflet-image.js"></script>
+
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+    <div id="controls">
+        <div class="row">
+            <label class="small">From (Mother Station)</label>
+        </div>
+        <input id="fromStation" placeholder="From station or blank" style="width:100%" />
+
+        <div class="row" style="margin-top:8px;">
+            <label class="small">To</label>
+        </div>
+        <input id="toStation" placeholder="Destination (select station)" style="width:100%" />
+
+        <div style="margin-top:10px;">
+            <label>Buffer distance: <span id="bufferValue">0.05</span> km</label><br>
+            <input type="range" id="bufferSlider" min="0.05" max="5" step="0.05" value="0.05" style="width:100%" />
+        </div>
+
+        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
+            <button class="btn" onclick="getRoute()">Show Route</button>
+            <button class="btn secondary" onclick="clearRoute()">Clear Route</button>
+            <button class="btn gray" onclick="toggleFollow()">Follow: <span id="followState">ON</span></button>
+        </div>
+		<div class="status" id="status" style="margin-top:6px; font-size:25px">📦 Showing 0 vehicle(s).</div>
+		<div id="vehicle-search-box">
+	  <input type="text" id="vehicle-search" placeholder="Search vehicle..." autocomplete="off" />
+	  <ul id="vehicle-suggestions"></ul>
+	</div>
+	<div id="vehicle-count-box">
+	  🟥 Stopped: <span class="stopped">0</span><br>
+	  🟩 Moving: <span class="moving">0</span><br>
+	  ⬛ No Signal: <span class="nosignal">0</span>
+	</div>
+        <datalist id="stationList"></datalist>
+        </div>
+
+    <div id="map"></div>
+
+    <div id="info">
+        <strong>Route Info</strong>
+        <div id="routeDetails">Distance and duration will appear here.</div>
+
+
+        <div style="margin-top:8px;">
+            <button class="btn" onclick="toggleDirections()">Show Directions</button>
+            <button class="btn" onclick="previewPDF()">Preview PDF</button>
+            <button class="btn" onclick="downloadPDF()">Download PDF</button>
+            <button class="btn secondary" onclick="exportCSV()">Export CSV</button>
+            <button class="btn secondary" onclick="exportExcel()">Export Excel</button>
+        </div>
+
+        <div id="directions" style="margin-top:8px; max-height:240px; overflow:auto; display:none;"></div>
+    </div>
+
+    <div id="poiLegend">
+        <div class="hdr">POI Legend (≤ <span id="legendBufferKm">0.05</span> km)</div>
+
+        <div class="row">
+            <div class="left"><span class="dot" style="background:#d32f2f"></span>Hospital</div>
+            <div><span id="legendCountHospital">0</span></div>
+        </div>
+        <div class="row">
+            <div class="left"><span class="dot" style="background:#673ab7"></span>Market</div>
+            <div><span id="legendCountMarket">0</span></div>
+        </div>
+        <div class="row">
+            <div class="left"><span class="dot" style="background:#00796b"></span>Police</div>
+            <div><span id="legendCountPolice">0</span></div>
+        </div>
+        <div class="row">
+            <div class="left"><span class="dot" style="background:#ff9800"></span>Govt Office</div>
+            <div><span id="legendCountGovt">0</span></div>
+        </div>
+        <div class="row">
+            <div class="left"><span class="dot" style="background:#3f51b5"></span>School</div>
+            <div><span id="legendCountSchool">0</span></div>
+        </div>
+        <div class="row">
+            <div class="left"><span class="dot" style="background:#f44336"></span>Fire Station</div>
+            <div><span id="legendCountFire">0</span></div>
+        </div>
+        <div class="row">
+            <div class="left"><span class="dot" style="background:#009688"></span>Hotel</div>
+            <div><span id="legendCountHotel">0</span></div>
+        </div>
+        <div class="row">
+            <div class="left"><span class="dot" style="background:#ff5722"></span>Petrol Pump</div>
+            <div><span id="legendCountPetrol">0</span></div>
+        </div>
+        <div class="row">
+            <div class="left"><span class="dot" style="background:#303f9f"></span>CNG Station</div>
+            <div><span id="legendCountCNG">0</span></div>
+        </div>
+        </div>
+
+    <div id="pdfPreviewModal">
+        <button onclick="document.getElementById('pdfPreviewModal').style.display='none'">Close</button>
+        <iframe id="pdfPreviewFrame"></iframe>
+    </div>
+
+<script>
+/* --------- CONFIG --------- */
+const ORS_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImM5MGRlNDMyODdjODQxNDNhY2I2M2NhZWRiMTJhNzM4IiwiaCI6Im11cm11cjY0In0=';
+const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+let SEARCH_BUFFER_KM = 0.05;
+
+/* --------- ArcGIS Stations --------- */
+const fromStationLayer = "https://mcgdplgis.com/server/rest/services/AMG_Route_Survey/FeatureServer/1";
+const toStationLayer   = "https://mcgdplgis.com/server/rest/services/AMG_Route_Survey/FeatureServer/0";
+
+let fromStations = [];
+let toStations   = [];
+let stationData  = [];  // merged for route finding
+
+async function fetchStations(url) {
+    // use f=json, not f=geojson
+    const queryUrl = `${url}/query?where=1%3D1&outFields=*&f=json`;
+    const res = await fetch(queryUrl);
+    if (!res.ok) throw new Error("ArcGIS query failed: " + res.status);
+    const data = await res.json();
+
+    return data.features.map(f => {
+        const props = f.attributes;
+        const geom = f.geometry;
+
+        return {
+            status: props.status || "OPERATIONAL",
+            ga_name: props.ga_name || "",
+            name: props.ro_name,
+            lat: geom.y,   // ArcGIS JSON uses x,y
+            lon: geom.x
+        };
+    });
+}
+
+
+async function loadStationData() {
+    try {
+        fromStations = await fetchStations(fromStationLayer);
+        toStations   = await fetchStations(toStationLayer);
+        stationData  = [...fromStations, ...toStations];
+
+        const fromInput = document.getElementById('fromStation');
+        const toInput    = document.getElementById('toStation');
+
+        // Create datalists
+        const fromList = document.createElement('datalist');
+        fromList.id = "fromList";
+        document.body.appendChild(fromList);
+        fromInput.setAttribute("list", "fromList");
+
+        const toList = document.createElement('datalist');
+        toList.id = "toList";
+        document.body.appendChild(toList);
+        toInput.setAttribute("list", "toList");
+
+        // Populate FROM list
+        fromStations.forEach(s => {
+            const o = document.createElement('option');
+            o.value = s.name;
+            fromList.appendChild(o);
+        });
+
+        // 🟢 INITIAL: Populate TO list with all stations
+        toStations.forEach(s => {
+            const o = document.createElement('option');
+            o.value = s.name;
+            toList.appendChild(o);
+        });
+
+        // --- NEW LOGIC ---
+        fromInput.addEventListener('blur', async e => {
+            const fromValue = e.target.value.trim();
+
+            if (fromValue === "") {
+                // Case 1: Use live location → show all stations
+                console.log("From is empty → using live GPS, showing ALL CNG stations.");
+                toList.innerHTML = "";
+                toStations.forEach(s => {
+                    const o = document.createElement('option');
+                    o.value = s.name;
+                    toList.appendChild(o);
+                });
+            } else {
+                // Case 2: User selected fromStation
+                const selected = fromStations.find(s => s.name === fromValue);
+                if (!selected) return;
+
+                const ga = selected.ga_name;
+                const filteredTo = toStations.filter(s => s.ga_name === ga);
+
+                console.log("From selected:", fromValue, "→ Filtering by GA:", ga);
+                toList.innerHTML = "";
+                filteredTo.forEach(s => {
+                    const o = document.createElement('option');
+                    o.value = s.name;
+                    toList.appendChild(o);
+                });
+            }
+        });
+    } catch (err) {
+        console.error("Error loading stations:", err);
+        alert("Could not load stations from ArcGIS");
+    }
+}
+loadStationData();
+
+// --- VEHICLES ---
+var vehicleMarkers={}, vehicleAnimData={}, vehicleTrails={}, allVehicleNumbers=[];
+
+function getBearing(start,end){
+    const lat1=start[0]*Math.PI/180, lon1=start[1]*Math.PI/180;
+    const lat2=end[0]*Math.PI/180, lon2=end[1]*Math.PI/180;
+    const y=Math.sin(lon2-lon1)*Math.cos(lat2);
+    const x=Math.cos(lat1)*Math.sin(lat2)-Math.sin(lat1)*Math.cos(lat2)*Math.cos(lon2-lon1);
+    return (Math.atan2(y,x)*180/Math.PI+360)%360;
+}
+function getCarSVG(color){
+    return `<svg width="12" height="20" viewBox="0 0 12 24" xmlns="http://www.w3.org/2000/svg">
+      <rect x="1" y="1" width="10" height="16" rx="2" ry="2" fill="${color}"/>
+      <circle cx="3" cy="14" r="1.2" fill="black"/>
+      <circle cx="9" cy="14" r="1.2" fill="black"/>
+      <circle cx="3" cy="4" r="0.9" fill="black"/>
+      <circle cx="9" cy="4" r="0.9" fill="black"/>
+    </svg>`;
+}
+
+// --- FETCH VEHICLES ---
+async function fetchVehicles(){
+    try{
+        const proxy='https://api.allorigins.win/raw?url=';
+        const target='https://api.wheelseye.com/currentLoc?accessToken=5f5f0fc5-fcb8-4002-826e-d396127e6993&ts='+Date.now();
+        const response=await fetch(proxy+encodeURIComponent(target));
+        const data=await response.json();
+        const vehicles=(data&&data.data&&data.data.list)?data.data.list:[];
+        let count=0, stoppedCount=0, movingCount=0, noSignalCount=0;
+        const numbersSet=new Set();
+
+        vehicles.forEach(v=>{
+            let color;
+            if(!v.latitude || !v.longitude){ color="black"; noSignalCount++; return; }
+            const lat=parseFloat(v.latitude), lng=parseFloat(v.longitude);
+            if(!Number.isFinite(lat)||!Number.isFinite(lng)) return;
+            count++; if(v.vehicleNumber) numbersSet.add(v.vehicleNumber);
+            const newPos=[lat,lng];
+            if(Number(v.speed)>0){ color="green"; movingCount++; } else{ color="red"; stoppedCount++; }
+
+            if(vehicleMarkers[v.vehicleNumber]){
+                const marker=vehicleMarkers[v.vehicleNumber];
+                const current=marker.getLatLng();
+                vehicleAnimData[v.vehicleNumber]={ start:[current.lat,current.lng], end:newPos, startTime:performance.now(), duration:1000 };
+                if(vehicleTrails[v.vehicleNumber]) vehicleTrails[v.vehicleNumber].addLatLng(newPos);
+                const el=marker._icon; if(el) el.innerHTML=getCarSVG(color);
+                marker.bindPopup(`<b>${v.vehicleNumber||''}</b><br>Speed: ${v.speed||''} km/h<br>Location: ${v.location||''}`);
+            } else{
+                const divIcon=L.divIcon({ className:'vehicle-icon', iconSize:[12,20], html:getCarSVG(color) });
+                const marker=L.marker(newPos,{icon:divIcon}).bindPopup(`<b>${v.vehicleNumber||''}</b><br>Speed: ${v.speed||''} km/h<br>Location: ${v.location||''}`).addTo(map);
+                vehicleMarkers[v.vehicleNumber]=marker;
+                vehicleAnimData[v.vehicleNumber]={ start:newPos,end:newPos,startTime:performance.now(),duration:1000 };
+                vehicleTrails[v.vehicleNumber]=L.polyline([newPos],{color:'blue',weight:1,opacity:0.7}).addTo(map);
+            }
+        });
+
+        allVehicleNumbers=Array.from(numbersSet).sort();
+        document.getElementById('status').innerText=`📦 Showing ${count} vehicle(s).`;
+        document.querySelector("#vehicle-count-box .stopped").innerText=stoppedCount;
+        document.querySelector("#vehicle-count-box .moving").innerText=movingCount;
+        document.querySelector("#vehicle-count-box .nosignal").innerText=noSignalCount;
+    } catch(err){ console.error('fetchVehicles error:', err);}
+}
+
+function animateVehicles(){
+    const now=performance.now();
+    for(const vNum in vehicleAnimData){
+        const anim=vehicleAnimData[vNum]; if(!anim||!vehicleMarkers[vNum]) continue;
+        let progress=(now-anim.startTime)/anim.duration; if(progress>1) progress=1;
+        const lat=anim.start[0]+(anim.end[0]-anim.start[0])*progress;
+        const lng=anim.start[1]+(anim.end[1]-anim.start[1])*progress;
+        vehicleMarkers[vNum].setLatLng([lat,lng]);
+        if(progress===1&&(anim.start[0]!==anim.end[0]||anim.start[1]!==anim.end[1])){
+            const brng=getBearing(anim.start,anim.end);
+            const el=vehicleMarkers[vNum]._icon; if(el){el.style.transform=`rotate(${brng}deg)`;el.style.transformOrigin='center center';}
+        }
+    }
+    requestAnimationFrame(animateVehicles);
+}
+animateVehicles(); fetchVehicles(); setInterval(fetchVehicles,1000);
+
+// --- VEHICLE SEARCH ---
+const searchInput=document.getElementById('vehicle-search'), suggestionBox=document.getElementById('vehicle-suggestions');
+searchInput.addEventListener('input',function(){
+    const query=this.value.trim().toLowerCase(); suggestionBox.innerHTML='';
+    if(query.length===0){ suggestionBox.style.display='none'; return; }
+    const matches=allVehicleNumbers.filter(vn=>vn.toLowerCase().includes(query));
+    if(matches.length===0){ suggestionBox.style.display='none'; return; }
+    matches.forEach(vn=>{
+        const li=document.createElement('li'); li.textContent=vn;
+        li.addEventListener('click',function(){ searchInput.value=vn; suggestionBox.style.display='none';
+            const marker=vehicleMarkers[vn]; if(marker){ map.setView(marker.getLatLng(),16); marker.openPopup();} else{alert('Vehicle not available on map currently.'); }
+        });
+        suggestionBox.appendChild(li);
+    });
+    suggestionBox.style.display='block';
+});
+document.addEventListener('click',function(e){ if(!searchInput.contains(e.target)&&!suggestionBox.contains(e.target)) suggestionBox.style.display='none'; });
+
+
+
+
+
+
+/* --------- Map setup --------- */
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: "© OpenStreetMap",
+    crossOrigin: true
+});
+const topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+    attribution: "© OpenTopoMap",
+    crossOrigin: true
+});
+const satellite = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { attribution: "Esri", crossOrigin: true }
+);
+
+
+const map = L.map('map', { layers: [osm], zoomControl: true }).setView([20.5937, 78.9629], 6);
+L.control.layers({ "OSM": osm, "Topo": topo, "Satellite": satellite }, null, { position: 'bottomleft' }).addTo(map);
+L.control.zoom({ position: 'bottomleft' }).addTo(map);
+L.control.scale().addTo(map);
+
+/* --------- State --------- */
+let routeLayer = null, fromMarker = null, toMarker = null, bufferLayer = null, poiLayer = L.layerGroup().addTo(map);
+let lastRouteData = null;
+let speedLayer = L.layerGroup().addTo(map);
+let routeGeoJSON = null, nearbyPlaces = [], lastMapImage = null;
+// UPDATED: Added new POI types to counts
+let counts = { hospital:0, market:0, police:0, government:0, school:0, fire:0, hotel:0, petrol:0, cng:0 };
+
+/* --------- Live Tracking State --------- */
+let userLocationMarker = null;
+let userAccuracyCircle = null;
+let followUser = true;
+const followStateEl = document.getElementById('followState');
+
+/* --------- Slider for buffer --------- */
+const slider = document.getElementById('bufferSlider');
+slider.addEventListener('input', () => {
+    SEARCH_BUFFER_KM = parseFloat(slider.value);
+    document.getElementById('bufferValue').innerText = SEARCH_BUFFER_KM.toFixed(1);
+    document.getElementById('bufferCountValue').innerText = SEARCH_BUFFER_KM.toFixed(1);
+    document.getElementById('legendBufferKm').innerText = SEARCH_BUFFER_KM.toFixed(1); // sync legend header
+    if(routeGeoJSON) buildBufferAndFetchPOIs(routeGeoJSON, SEARCH_BUFFER_KM);
+});
+
+/* --------- Icons --------- */
+function makeIcon(color,label){
+    const svg=encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='28' height='42' viewBox='0 0 28 42'><path d='M14 0C6.268 0 0 6.268 0 14c0 10.5 14 28 14 28s14-17.5 14-28C28 6.268 21.732 0 14 0z' fill='${color}'/><text x='14' y='18' text-anchor='middle' font-size='10' fill='#fff'>${label||''}</text></svg>`);
+    return L.icon({iconUrl:`data:image/svg+xml;charset=UTF-8,${svg}`,iconSize:[28,42],iconAnchor:[14,42],popupAnchor:[0,-38]});
+}
+// UPDATED: Added new icons
+const ICONS = {
+    hospital: makeIcon('#d32f2f','H'),
+    market: makeIcon('#673ab7','M'),
+    police: makeIcon('#00796b','P'),
+    government: makeIcon('#ff9800','G'),
+    school: makeIcon('#3f51b5','S'),
+    fire: makeIcon('#f44336','F'),
+    hotel: makeIcon('#009688','T'),
+    petrol: makeIcon('#ff5722','P'),
+    cng: makeIcon('#303f9f','C')
+};
+
+/* --------- Live User Location Tracking (watch) --------- */
+function startLiveLocation(){
+    if(!navigator.geolocation){
+        console.warn("Geolocation not supported");
+        return;
+    }
+    map.locate({ setView:false, watch:true, enableHighAccuracy:true, maxZoom: 16 })
+        .on("locationfound", e=>{
+            const latlng = [e.latitude, e.longitude];
+            if(!userLocationMarker){
+                // Blue-dot style marker
+                const dot = L.divIcon({
+                    className: "user-dot",
+                    html: '<div style="width:16px;height:16px;border-radius:50%;background:#1976d2;box-shadow:0 0 0 4px rgba(25,118,210,0.25)"></div>',
+                    iconSize: [16,16],
+                    iconAnchor: [8,8]
+                });
+                userLocationMarker = L.marker(latlng, { icon: dot }).addTo(map).bindPopup("You are here");
+            } else {
+                userLocationMarker.setLatLng(latlng);
+            }
+
+            // Accuracy circle
+            if(userAccuracyCircle) userAccuracyCircle.setLatLng(latlng).setRadius(e.accuracy || 0);
+            else userAccuracyCircle = L.circle(latlng, { radius: e.accuracy || 0, color: "#1976d2", weight: 1, opacity: 0.6, fillOpacity: 0.08 }).addTo(map);
+
+            if(followUser){ map.setView(latlng, Math.max(map.getZoom(), 14)); }
+        })
+        .on("locationerror", err=>{
+            console.error(err);
+        });
+}
+function toggleFollow(){
+    followUser = !followUser;
+    followStateEl.textContent = followUser ? 'ON' : 'OFF';
+}
+
+/* Start tracking immediately */
+startLiveLocation();
+
+/* --------- Route & POI functions --------- */
+function getRoute() {
+    const fromValue = document.getElementById('fromStation').value.trim();
+    const toValue = document.getElementById('toStation').value.trim();
+    const target = stationData.find(s=>s.name===toValue);
+    if(!target){alert('Select valid destination'); return;}
+
+    // Prefer live-tracking position if available and from is blank
+    if(!fromValue && userLocationMarker){
+        const pos = userLocationMarker.getLatLng();
+        clearRoute();
+        fromMarker = L.marker([pos.lat,pos.lng]).addTo(map).bindPopup('From: My Live Location');
+        toMarker = L.marker([target.lat,target.lon]).addTo(map).bindPopup('To: '+target.name);
+        fetchRoute(pos.lat,pos.lng,target.lat,target.lon);
+        return;
+    }
+
+    if(!fromValue){
+        if(!navigator.geolocation){alert('Geolocation not supported.'); return;}
+        navigator.geolocation.getCurrentPosition(pos=>{
+            clearRoute();
+            fromMarker = L.marker([pos.coords.latitude,pos.coords.longitude]).addTo(map).bindPopup('From: My Location');
+            toMarker = L.marker([target.lat,target.lon]).addTo(map).bindPopup('To: '+target.name);
+            fetchRoute(pos.coords.latitude,pos.coords.longitude,target.lat,target.lon);
+        },()=>alert('Unable to get location'));
+    } else {
+        const source = stationData.find(s=>s.name===fromValue);
+        if(!source){alert('Select valid source'); return;}
+        clearRoute();
+        fromMarker = L.marker([source.lat,source.lon]).addTo(map).bindPopup('From: '+source.name);
+        toMarker = L.marker([target.lat,target.lon]).addTo(map).bindPopup('To: '+target.name);
+        fetchRoute(source.lat,source.lon,target.lat,target.lon);
+    }
+}
+
+async function fetchRoute(lat1,lon1,lat2,lon2){
+    try{
+        const res=await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson',{
+            method:'POST', headers:{'Authorization':ORS_KEY,'Content-Type':'application/json'},
+            body: JSON.stringify({coordinates:[[lon1,lat1],[lon2,lat2]]})
+        });
+        if(!res.ok){ throw new Error('ORS error: ' + res.status); }
+        const data = await res.json();
+        const coords = data.features[0].geometry.coordinates.map(c=>[c[1],c[0]]);
+        if(routeLayer) map.removeLayer(routeLayer);
+        routeLayer = L.polyline(coords, {
+            color: 'blue',
+            weight: 5,
+            renderer: L.canvas({ padding: 0.5 })  // 🟢 force canvas
+        }).addTo(map);
+
+        map.fitBounds(routeLayer.getBounds(),{padding:[40,40]});
+        routeGeoJSON = { type:'Feature', geometry:data.features[0].geometry, properties:{} };
+
+        const seg = data.features[0].properties.segments[0];
+        const distKm = seg.distance/1000;
+        const dur = seg.duration; const hrs=Math.floor(dur/3600); const mins=Math.round((dur%3600)/60);
+
+        document.getElementById('routeDetails').innerText =
+            `Distance: ${distKm.toFixed(2)} km\nDuration: ${hrs} hrs ${mins} mins`;
+
+        const html = (seg.steps||[]).map(s=>`<li>${s.instruction}</li>`).join('');
+        document.getElementById('directions').innerHTML = `<ol>${html}</ol>`;
+        document.getElementById('directions').style.display='none';
+
+        // Build POIs within buffer
+        await buildBufferAndFetchPOIs(routeGeoJSON, SEARCH_BUFFER_KM);
+
+        // --- Speed limits: try ORS first (if they exist on steps), else fallback to OSM ---
+        speedLayer.clearLayers();
+        const orsSpeeds = (seg.steps || [])
+            .filter(s => s && (s.speed_limit || (s.attributes && s.attributes.maxspeed)))
+            .map(s => {
+                const val = s.speed_limit || (s.attributes && s.attributes.maxspeed);
+                return `${s.road_class || 'road'}: ${val} km/h`;
+            });
+
+        if(orsSpeeds.length > 0){
+            document.getElementById('routeDetails').innerText += `\n\nSpeed Limits (ORS):\n${orsSpeeds.slice(0,10).join("\n")}${orsSpeeds.length>10?" ...":""}`;
+        } else {
+            await fetchOSMSpeedLimits(routeGeoJSON); // fallback
+        }
+
+        // 🟢 ADD THIS PART (Leaflet-image snapshot)
+        // 🟢 Map snapshot with html2canvas
+        await new Promise(r => setTimeout(r, 800)); // wait for map render
+        const mapEl = document.getElementById('map');
+        const canvas = await html2canvas(mapEl, { useCORS: true, scale: 2 });
+        lastMapImage = canvas.toDataURL('image/png');
+
+    } catch(err){
+        console.error(err); alert('Error fetching route.');
+    }
+}
+
+/* --------- Buffer & POIs (real Overpass) --------- */
+async function buildBufferAndFetchPOIs(lineFeature, bufferKm){
+    if(bufferLayer){map.removeLayer(bufferLayer); bufferLayer=null;}
+    poiLayer.clearLayers();
+    // UPDATED: Added new POI types to reset
+    nearbyPlaces=[]; counts={hospital:0,market:0,police:0,government:0,school:0,fire:0,hotel:0, petrol:0, cng:0 };
+    updateCountsUI();
+
+    const buffered = turf.buffer(lineFeature, bufferKm, { units:'kilometers' });
+    bufferLayer = L.geoJSON(buffered,{style:{color:'#f44336',weight:2,dashArray:'6,4',fillOpacity:0.03}}).addTo(map);
+
+    const bbox = turf.bbox(buffered); const pad=0.005;
+    const minX=bbox[0]-pad, minY=bbox[1]-pad, maxX=bbox[2]+pad, maxY=bbox[3]+pad;
+
+    // UPDATED: Added new POI types to the query
+    const query = `
+[out:json][timeout:25];
+(
+    node["amenity"="hospital"](${minY},${minX},${maxY},${maxX});
+    node["amenity"="police"](${minY},${minX},${maxY},${maxX});
+    node["office"="government"](${minY},${minX},${maxY},${maxX});
+    node["amenity"="marketplace"](${minY},${minX},${maxY},${maxX});
+    node["shop"="supermarket"](${minY},${minX},${maxY},${maxX});
+    node["amenity"="school"](${minY},${minX},${maxY},${maxX});
+    node["amenity"="fire_station"](${minY},${minX},${maxY},${maxX});
+    node["tourism"="hotel"](${minY},${minX},${maxY},${maxX});
+    node["amenity"="fuel"](${minY},${minX},${maxY},${maxX});
+    node["amenity"="compressed_natural_gas"](${minY},${minX},${maxY},${maxX});
+);
+out center;`;
+
+    try{
+        const res = await fetch(OVERPASS_URL,{method:'POST', body:query});
+        const data = await res.json();
+        data.elements.forEach(el=>{
+            const lat=el.lat||(el.center&&el.center.lat); const lon=el.lon||(el.center&&el.center.lon);
+            if(lat==null||lon==null) return;
+            const pt=turf.point([lon,lat]);
+            if(!turf.booleanPointInPolygon(pt,buffered)) return;
+
+            const tags = el.tags||{};
+            const name = tags.name||'Unnamed'; const amenity=tags.amenity||''; const office=tags.office||''; const shop=tags.shop||''; const tourism=tags.tourism||'';
+            let type=null;
+            if(amenity==='hospital') type='hospital';
+            else if(amenity==='police') type='police';
+            else if(office==='government') type='government';
+            else if(amenity==='marketplace'||shop==='supermarket') type='market';
+            else if(amenity==='school') type='school';
+            else if(amenity==='fire_station') type='fire';
+            else if(tourism==='hotel') type='hotel';
+            // UPDATED: New POI type checks
+            else if(amenity === 'fuel') type = 'petrol';
+            else if(amenity === 'compressed_natural_gas') type = 'cng';
+            else return;
+
+            const distKm = turf.pointToLineDistance(pt,lineFeature,{units:'kilometers'});
+            if(distKm>bufferKm) return;
+
+            counts[type]++; updateCountsUI();
+            const marker = L.marker([lat,lon],{icon:ICONS[type]}).addTo(poiLayer).bindPopup(`<b>${name}</b><br>Type: ${type}`);
+            nearbyPlaces.push(marker);
+        });
+    } catch(err){console.error(err);}
+}
+
+/* --------- Update counts in BOTH panels --------- */
+function updateCountsUI(){
+    // bottom-right legend
+    document.getElementById('legendCountHospital').innerText = counts.hospital;
+    document.getElementById('legendCountMarket').innerText = counts.market;
+    document.getElementById('legendCountPolice').innerText = counts.police;
+    document.getElementById('legendCountGovt').innerText = counts.government;
+    document.getElementById('legendCountSchool').innerText = counts.school;
+    document.getElementById('legendCountFire').innerText = counts.fire;
+    document.getElementById('legendCountHotel').innerText = counts.hotel;
+    // UPDATED: Added new counts to legend
+    document.getElementById('legendCountPetrol').innerText = counts.petrol;
+    document.getElementById('legendCountCNG').innerText = counts.cng;
+}
+
+/* --------- Directions toggle --------- */
+function toggleDirections(){
+    const dir = document.getElementById('directions');
+    dir.style.display = dir.style.display==='none'?'block':'none';
+}
+
+/* --------- Clear --------- */
+function clearRoute(){
+    if(routeLayer) map.removeLayer(routeLayer); routeLayer=null;
+    if(fromMarker) map.removeLayer(fromMarker); fromMarker=null;
+    if(toMarker) map.removeLayer(toMarker); toMarker=null;
+    if(bufferLayer) map.removeLayer(bufferLayer); bufferLayer=null;
+    poiLayer.clearLayers();
+    speedLayer.clearLayers();
+    routeGeoJSON=null; nearbyPlaces=[]; lastMapImage=null;
+    // UPDATED: Reset all counts
+    Object.keys(counts).forEach(k=>counts[k]=0); updateCountsUI();
+    document.getElementById('routeDetails').innerText='Distance and duration will appear here.';
+    document.getElementById('directions').innerHTML=''; document.getElementById('directions').style.display='none';
+}
+
+/* --------- PDF --------- */
+/* --------- Helpers for Directions --------- */
+function getDirectionSteps() {
+    const dirHTML = document.getElementById('directions').innerHTML;
+    if (!dirHTML) return [];
+    const temp = document.createElement("div");
+    temp.innerHTML = dirHTML;
+    return Array.from(temp.querySelectorAll("li")).map((li, i) => `${i + 1}. ${li.innerText}`);
+}
+
+function toTwoColumnRows(steps) {
+    const rows = [];
+    for (let i = 0; i < steps.length; i += 2) {
+        rows.push([steps[i] || "", steps[i + 1] || ""]);
+    }
+    return rows;
+}
+
+/* --------- PDF Preview --------- */
+function previewPDF(){
+    if(!lastMapImage){ alert('Generate route first'); return; }
+    const doc = new jspdf.jsPDF('p','mm','a4');
+
+    // Map snapshot
+    doc.addImage(lastMapImage,'PNG',10,10,190,100);
+
+
+    // Only include Distance & Duration
+    const infoText = document.getElementById('routeDetails').innerText;
+    const lines = doc.splitTextToSize(infoText, 190);
+    doc.text(lines, 10, 122);
+
+    // Directions in 2 columns
+    const steps = getDirectionSteps();
+    if (steps.length) {
+        const bodyRows = toTwoColumnRows(steps);
+        doc.autoTable({
+            startY: 135,
+            head: [['Directions (Step by Step)', '']],
+            body: bodyRows,
+            styles: { overflow: 'linebreak', cellPadding: 3, fontSize: 10 },
+            columnStyles: { 0: { cellWidth: 95 }, 1: { cellWidth: 95 } },
+            theme: 'grid',
+            margin: { left: 10, right: 10 }
+        });
+    }
+
+    document.getElementById('pdfPreviewFrame').src = doc.output('datauristring');
+    document.getElementById('pdfPreviewModal').style.display='block';
+}
+
+/* --------- PDF Download --------- */
+function downloadPDF(){
+    if(!lastMapImage){ alert('Generate route first'); return; }
+    const doc = new jspdf.jsPDF('p','mm','a4');
+
+    // Map snapshot
+    doc.addImage(lastMapImage,'PNG',10,10,190,100);
+
+    // Route info
+    doc.setFontSize(12);
+    doc.text("Route Info:", 10, 115);
+    // Extract Distance and Duration separately
+    const routeInfoEl = document.getElementById('routeDetails').innerText;
+    const routeLines = routeInfoEl.split('\n');
+    let distanceLine = "", durationLine = "";
+    routeLines.forEach(line=>{
+        if(line.toLowerCase().includes("distance")) distanceLine = line;
+        if(line.toLowerCase().includes("duration")) durationLine = line;
+    });
+
+    // Add Distance
+    doc.setFontSize(08);
+    doc.text("Distance:", 10, 115);
+    doc.setFontSize(08);
+    doc.text(distanceLine.replace("Distance:", "").trim(), 40, 115);
+
+    // Add Duration
+    doc.setFontSize(08);
+    doc.text("Duration:", 10, 122);
+    doc.setFontSize(08);
+    doc.text(durationLine.replace("Duration:", "").trim(), 40, 122);
+
+
+    // Directions in 2 columns
+    const steps = getDirectionSteps();
+    if (steps.length) {
+        const bodyRows = toTwoColumnRows(steps);
+        doc.autoTable({
+            startY: 135,
+            head: [['Directions (Step by Step)', '']],
+            body: bodyRows,
+            styles: { overflow: 'linebreak', cellPadding: 3, fontSize: 10 },
+            columnStyles: { 0: { cellWidth: 95 }, 1: { cellWidth: 95 } },
+            theme: 'grid',
+            margin: { left: 10, right: 10 }
+        });
+    }
+
+    doc.save('CNG_Route_Report.pdf');
+}
+
+/* --------- Export CSV / Excel --------- */
+function exportCSV(){
+    if(!routeGeoJSON){ alert("Generate route first"); return; }
+    let rows = [["Type","Name","Latitude","Longitude"]];
+    nearbyPlaces.forEach(m=>{
+        const lat = m.getLatLng().lat, lon = m.getLatLng().lng;
+        const popup = m.getPopup().getContent();
+        const type = (popup.match(/Type:\s*([A-Za-z]+)/)||[])[1] || "";
+        const name = (popup.match(/<b>(.*?)<\/b>/)||[])[1] || "";
+        rows.push([type, name, lat, lon]);
+    });
+    let csv = rows.map(r=>r.join(",")).join("\n");
+    let blob = new Blob([csv], {type:"text/csv"});
+    let url = URL.createObjectURL(blob);
+    let a = document.createElement("a");
+    a.href = url; a.download = "Route_POIs.csv"; a.click();
+    URL.revokeObjectURL(url);
+}
+
+function exportExcel(){
+    if(!routeGeoJSON){ alert("Generate route first"); return; }
+    // Sheet 1: POIs
+    let rows = [["Type","Name","Latitude","Longitude"]];
+    nearbyPlaces.forEach(m=>{
+        const lat = m.getLatLng().lat, lon = m.getLatLng().lng;
+        const popup = m.getPopup().getContent();
+        const type = (popup.match(/Type:\s*([A-Za-z]+)/)||[])[1] || "";
+        const name = (popup.match(/<b>(.*?)<\/b>/)||[])[1] || "";
+        rows.push([type, name, lat, lon]);
+    });
+    const wsPOI = XLSX.utils.aoa_to_sheet(rows);
+
+    // Sheet 2: RouteSummary
+    const infoText = document.getElementById('routeDetails').innerText || '';
+    // UPDATED: Added new POI types to the Excel summary
+    const summaryRows = [
+        ["Buffer_km", SEARCH_BUFFER_KM],
+        ["Hospitals", counts.hospital],
+        ["Markets", counts.market],
+        ["Police", counts.police],
+        ["Govt Offices", counts.government],
+        ["Schools", counts.school],
+        ["Fire Stations", counts.fire],
+        ["Hotels", counts.hotel],
+        ["Petrol Pumps", counts.petrol],
+        ["CNG Stations", counts.cng],
+        [],
+        ["Route Info"],
+        [infoText]
+    ];
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, wsPOI, "POIs");
+    XLSX.utils.book_append_sheet(wb, wsSummary, "RouteSummary");
+    XLSX.writeFile(wb, "Route_POIs.xlsx");
+}
+
+/* --------- Speed Limits (OSM fallback) --------- */
+function colorBySpeed(speedTag){
+    if(!speedTag) return "gray";
+    const num = parseInt(String(speedTag).replace(/[^\d]/g,''));
+    if(isNaN(num)) return "gray";
+    if(num <= 30) return "red";
+    if(num <= 60) return "orange";
+    return "green";
+}
+
+async function fetchOSMSpeedLimits(lineFeature){
+    try{
+        const smallBufferKm = 0.2;
+        const smallBuffered = turf.buffer(lineFeature, smallBufferKm, {units:'kilometers'});
+        const bbox = turf.bbox(smallBuffered);
+        const pad = 0.003;
+        const minX=bbox[0]-pad, minY=bbox[1]-pad, maxX=bbox[2]+pad, maxY=bbox[3]+pad;
+
+        const query = `
+[out:json][timeout:25];
+way["maxspeed"](${minY},${minX},${maxY},${maxX});
+out tags center;`;
+
+        const res = await fetch(OVERPASS_URL, { method:'POST', body: query });
+        const data = await res.json();
+
+        let speeds = [];
+        speedLayer.clearLayers();
+
+        (data.elements || []).forEach(el=>{
+            if(!(el.tags && el.tags.maxspeed)) return;
+            const lat = (el.center && el.center.lat); const lon = (el.center && el.center.lon);
+            if(lat==null || lon==null) return;
+
+            const pt = turf.point([lon,lat]);
+            if(!turf.booleanPointInPolygon(pt, smallBuffered)) return;
+
+            speeds.push(`${el.tags.highway || "road"}: ${el.tags.maxspeed}`);
+            L.circleMarker([lat,lon], {
+                radius: 5,
+                color: colorBySpeed(el.tags.maxspeed),
+                weight: 2,
+                opacity: 0.9,
+                fillOpacity: 0.7
+            }).addTo(speedLayer).bindPopup(`Speed: ${el.tags.maxspeed}`);
+        });
+
+        if(speeds.length>0){
+            document.getElementById('routeDetails').innerText +=
+                "\n\nSpeed Limits (OSM):\n" + speeds.slice(0,10).join("\n") + (speeds.length>10?" ...":"");
+        } else {
+            document.getElementById('routeDetails').innerText += "\n\n(No speed limit data available)";
+        }
+    } catch(err){
+        console.error("Speed fetch error:", err);
+        document.getElementById('routeDetails').innerText += "\n\n(Speed limit fetch failed)";
+    }
+}
+</script>
+</body>
+</html>
